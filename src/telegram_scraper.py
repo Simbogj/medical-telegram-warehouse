@@ -8,8 +8,8 @@ Scrapes public Telegram channels and stores:
 - Logs: logs/scrape_YYYY-MM-DD.log
 
 Usage:
-    python src/scraper.py --demo --path data --limit 50
-    python src/scraper.py --path data --limit 500   # live Telegram auth
+    python src/telegram_scraper.py --demo --path data --limit 50
+    python src/telegram_scraper.py --path data --limit 500   # live Telegram auth
 """
 
 import os
@@ -87,6 +87,87 @@ console_handler = logging.StreamHandler()
 console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
 
 
+# ------------------------------------------------
+# SAVE HELPERS
+# ------------------------------------------------
+
+def write_channel_messages_json(
+    base_path,
+    date_str,
+    channel_name,
+    messages,
+):
+
+    output_dir = os.path.join(
+        base_path,
+        "raw",
+        "telegram_messages",
+        date_str,
+    )
+
+    os.makedirs(
+        output_dir,
+        exist_ok=True,
+    )
+
+    output_file = os.path.join(
+        output_dir,
+        f"{channel_name}.json",
+    )
+
+    with open(
+        output_file,
+        "w",
+        encoding="utf8",
+    ) as f:
+
+        json.dump(
+            messages,
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+def write_manifest(
+    base_path,
+    date_str,
+    channel_message_counts,
+):
+
+    manifest = {
+
+        "scrape_date":
+        date_str,
+
+        "channels":
+        channel_message_counts,
+
+        "total_messages":
+        sum(
+            channel_message_counts.values()
+        ),
+
+    }
+
+    output = os.path.join(
+        base_path,
+        "raw",
+        f"manifest_{date_str}.json",
+    )
+
+    with open(
+        output,
+        "w",
+        encoding="utf8",
+    ) as f:
+
+        json.dump(
+            manifest,
+            f,
+            indent=2,
+        )
+
 
 # =============================================================================
 # LIVE SCRAPING (requires Telegram auth)
@@ -104,7 +185,11 @@ async def scrape_channel(client, channel, writer, base_path, date_str,
     while True:
         try:
             entity = await client.get_entity(channel)
-            channel_title = entity.title
+            channel_title = getattr(
+    entity,
+    "title",
+    channel_name,
+)
             messages = []
 
             channel_image_dir = os.path.join(base_path, "raw", "images", channel_name)
@@ -209,9 +294,9 @@ async def scrape_all_channels(client, channels, base_path, limit=100,
 
 
 CHANNEL_COLORS = {
-    "EthioFinance": (30, 80, 160),
-    "AddisTradeHub": (20, 120, 60),
-    "EthRealEstate": (140, 60, 30),
+    "CheMed": (0,120,210),
+    "LobeliaCosmetics": (180,70,130),
+    "TikvahPharma": (40,140,90),
 }
 
 
