@@ -1,0 +1,26 @@
+version: 2
+sources:
+  - name: raw
+    schema: raw
+    tables:
+      - name: telegram_messages
+        description: "Raw Telegram messages loaded by the Python loader."
+        columns:
+          - name: message_id
+            description: "Unique identifier from Telegram"
+          - name: channel_name
+            description: "Telegram channel handle"
+          - name: channel_title
+            description: "Human readable channel title"
+          - name: message_date
+            description: "ISO timestamp of the message"
+          - name: message_text
+            description: "Full text of the message"
+          - name: has_media
+            description: "Flag indicating presence of media"
+          - name: image_path
+            description: "Filesystem path to downloaded image"
+          - name: views
+            description: "Number of views"
+          - name: forwards
+            description: "Number of forwards"
