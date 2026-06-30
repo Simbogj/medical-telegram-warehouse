@@ -1,208 +1,131 @@
 # Medical Telegram Warehouse
 
-An end-to-end ELT data platform that extracts medical business data from public Telegram channels, transforms it into an analytical warehouse, enriches image data using object detection, and exposes insights through a REST API.
+An end-to-end ELT data platform that extracts medical business data from public Telegram channels, transforms it into an analytical warehouse, enriches image data using YOLOv8, and exposes insights through a REST API orchestrated by Dagster.
 
 ---
 
-## Project Overview
-
-This project builds a modern data pipeline for collecting, transforming, enriching, and serving analytical insights from Ethiopian medical-related Telegram channels.
-
-The platform:
-
-* Extracts Telegram messages and media
-* Stores raw data in a Data Lake
-* Loads data into PostgreSQL
-
----
-
-# Project Structure
-
-```plaintext
-medical-telegram-warehouse/
-
-├── api/
-│   
-├── data/
-│   ├── raw/
-│   │   ├── images/
-│   │   └── telegram_messages/
-├── logs/
-├── medical_warehouse/
-├── notebooks/
-├── scripts/
-├── src/
-├── tests/
-├── docker-compose.yml
-├── Dockerfile
-├── requirements.txt
-├── README.md
-└── .env
-```
-
----
-
-# Environment Setup
-
-## Clone Repository
+## Quick Start
 
 ```bash
-git clone https://github.com/Simbogj/medical-telegram-warehouse.git
-cd medical-telegram-warehouse
-```
-
-## Create Virtual Environment
-
-Windows:
-
-```bash
-python -m venv venv
-venv\Scripts\activate
-```
-
-Linux/Mac:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
+python -m venv venv && venv\Scripts\activate   # Windows
 pip install -r requirements.txt
+docker compose up -d
+cp .env.example .env   # add Telegram + DB credentials
 ```
 
 ---
 
-# Environment Variables
-
-Create `.env`
-
-```env
-API_ID=MY_TELEGRAM_API
-API_HASH=HASH
-
-DB_USER=postgres
-DB_PASSWORD=******
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=telegram_warehouse
-```
-
----
-
-# Task 1 — Telegram Data Collection
-
-Run scraper:
+## Task 1 — Telegram Scraping
 
 ```bash
-python src/scraper.py
+python src/scraper.py --demo --path data --limit 50   # no API keys
+python src/scraper.py --path data --limit 500           # live Telethon
 ```
 
-Output:
-
-```plaintext
-data/raw/telegram_messages/
-data/raw/images/
-logs/
-```
-
-Collected fields:
-
-* message_id
-* channel_name
-* message_date
-* message_text
-* views
-* forwards
-* image_path
+Output: `data/raw/telegram_messages/`, `data/raw/images/`, `logs/`
 
 ---
 
-# Task 2 — Data Warehouse and dbt
-
-Load raw data:
+## Task 2 — dbt Warehouse
 
 ```bash
 python src/load_to_postgres.py --path data
-```
-
-Initialize dbt:
-
-```bash
-dbt init medical_warehouse
-```
-
-Run models:
-
-```bash
 cd medical_warehouse
 dbt run --profiles-dir .
-```
-
-Run tests:
-
-```bash
 dbt test --profiles-dir .
+dbt docs generate --profiles-dir .
 ```
 
-Generate documentation:
+See [docs/INTERIM_REPORT.md](docs/INTERIM_REPORT.md) for star schema design.
+
+---
+
+## Task 3 — YOLO Enrichment
 
 ```bash
-dbt docs generate --profiles-dir .
-dbt docs serve --profiles-dir .
+python src/yolo_detect.py --image-dir data/raw/images --output data/yolo_results.csv
+python src/load_yolo_to_postgres.py --csv data/yolo_results.csv
+cd medical_warehouse && dbt run --select fct_image_detections --profiles-dir .
 ```
 
-See [docs/INTERIM_REPORT.md](docs/INTERIM_REPORT.md) for the interim submission write-up (Tasks 1 & 2).
+Analysis write-up: [docs/TASK3_YOLO_ANALYSIS.md](docs/TASK3_YOLO_ANALYSIS.md)
+
+**Image categories:** `promotional`, `product_display`, `lifestyle`, `other`
 
 ---
 
-# Star Schema
+## Task 4 — Analytical API
 
-## Dimensions
+```bash
+uvicorn api.main:app --reload --port 8000
+```
 
-### dim_channels
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/reports/top-products?limit=10` | Most frequent product terms |
+| `GET /api/channels/{channel_name}/activity` | Daily posting trends |
+| `GET /api/search/messages?query=paracetamol` | Keyword search |
+| `GET /api/reports/visual-content` | Image usage by channel |
 
-* channel_key
-* channel_name
-* channel_type
-* total_posts
-* avg_views
+OpenAPI docs: http://localhost:8000/docs
 
-### dim_dates
-
-* date_key
-* month
-* quarter
-* year
-* week
-
-## Facts
-
-### fct_messages
-
-* message_id
-* channel_key
-* date_key
-* message_text
-* message_length
-* views
-* forwards
-
-### fct_image_detections
-
-* message_id
-* detected_class
-* confidence_score
-* image_category
+```bash
+pytest tests/test_api.py -v
+```
 
 ---
 
-# Future Work
+## Task 5 — Dagster Orchestration
 
-* Task 3 — Data Enrichment with Object Detection (YOLO) 
-* Task 4 — Build an Analytical API
-* Task 5 — Pipeline Orchestration
+```bash
+dagster dev -f pipeline.py
+```
+
+Open http://localhost:3000 — run `medical_warehouse_job` manually or via the daily schedule (02:00 UTC).
+
+Pipeline order: **scrape → load → dbt run → YOLO + load + fct_image_detections**
+
+Set `SCRAPER_DEMO=true` (default) for demo mode without Telegram credentials.
 
 ---
+
+## Branch Strategy
+
+| Branch | Scope |
+|--------|-------|
+| `task-1` / `task-2` | Scraping + dbt foundation |
+| `task3-yolo` | YOLO detection + `fct_image_detections` |
+| `task4-analytics` | FastAPI analytical endpoints |
+| `task5-dagster` | Full Dagster pipeline + CI |
+
+---
+
+## Environment Variables
+
+```env
+Tg_API_ID=
+Tg_API_HASH=
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=telegram_warehouse
+DB_USER=postgres
+DB_PASSWORD=postgres
+SCRAPER_DEMO=true
+SCRAPER_LIMIT=100
+YOLO_OUTPUT_CSV=data/yolo_results.csv
+```
+
+---
+
+## Project Structure
+
+```
+medical-telegram-warehouse/
+├── api/                  # Task 4 — FastAPI
+├── medical_warehouse/    # Task 2/3 — dbt models
+├── src/                  # Tasks 1/3 — scraper, loader, YOLO
+├── pipeline.py           # Task 5 — Dagster
+├── tests/                # API unit tests
+├── docs/                 # Reports & analysis
+└── data/                 # Data lake (gitignored)
+```

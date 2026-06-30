@@ -17,7 +17,6 @@ from dagster import (
     DagsterRunStatus,
     Definitions,
     Failure,
-    OpExecutionContext,
     RunStatusSensorContext,
     ScheduleDefinition,
     job,
@@ -32,7 +31,7 @@ def run_cmd(
     cmd: list[str],
     *,
     cwd: Path | None = None,
-    context: OpExecutionContext | None = None,
+    context=None,
 ) -> str:
     log = context.log if context else None
     display = " ".join(cmd)
@@ -58,7 +57,7 @@ def run_cmd(
 
 
 @op(description="Scrape Telegram channels into the raw data lake.")
-def scrape_telegram_data(context: OpExecutionContext) -> str:
+def scrape_telegram_data(context) -> str:
     script = PROJECT_ROOT / "src" / "telegram_scraper.py"
     if not script.is_file():
         raise Failure(description=f"Scraper not found: {script}")
@@ -75,7 +74,7 @@ def scrape_telegram_data(context: OpExecutionContext) -> str:
 
 
 @op(description="Load raw JSON and images metadata into PostgreSQL raw schema.")
-def load_raw_to_postgres(context: OpExecutionContext, _scrape: str) -> str:
+def load_raw_to_postgres(context, _scrape: str) -> str:
     script = PROJECT_ROOT / "src" / "load_to_postgres.py"
     run_cmd(
         [sys.executable, str(script), "--path", "data"],
@@ -85,7 +84,7 @@ def load_raw_to_postgres(context: OpExecutionContext, _scrape: str) -> str:
 
 
 @op(description="Run dbt staging and mart models.")
-def run_dbt_transformations(context: OpExecutionContext, _loaded: str) -> str:
+def run_dbt_transformations(context, _loaded: str) -> str:
     dbt_dir = PROJECT_ROOT / "medical_warehouse"
     run_cmd(
         ["dbt", "run", "--profiles-dir", "."],
@@ -96,12 +95,17 @@ def run_dbt_transformations(context: OpExecutionContext, _loaded: str) -> str:
 
 
 @op(description="Run YOLO detection, load results, and rebuild fct_image_detections.")
-def run_yolo_enrichment(context: OpExecutionContext, _transformed: str) -> str:
+def run_yolo_enrichment(context, _transformed: str) -> str:
     detect = PROJECT_ROOT / "src" / "yolo_detect.py"
     loader = PROJECT_ROOT / "src" / "load_yolo_to_postgres.py"
     dbt_dir = PROJECT_ROOT / "medical_warehouse"
 
-    run_cmd([sys.executable, str(detect)], context=context)
+    yolo_demo = os.getenv("YOLO_DEMO", "false").lower() in {"1", "true", "yes"}
+    detect_cmd = [sys.executable, str(detect)]
+    if yolo_demo:
+        detect_cmd.append("--demo")
+
+    run_cmd(detect_cmd, context=context)
     run_cmd([sys.executable, str(loader)], context=context)
     run_cmd(
         ["dbt", "run", "--select", "fct_image_detections", "--profiles-dir", "."],

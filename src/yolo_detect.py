@@ -93,6 +93,44 @@ def categorize_image(class_names: list[str]) -> tuple[str, str]:
     return detected_class, "other"
 
 
+def run_demo_detection(image_dir: str, output_csv: str) -> int:
+    """Assign image categories without YOLO (CI/demo fallback)."""
+    img_root = Path(image_dir)
+    output_path = Path(output_csv)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not img_root.exists():
+        logger.warning("Image directory does not exist: %s", img_root)
+        return 0
+
+    image_paths = get_image_paths(img_root)
+    demo_categories = ["product_display", "promotional", "product_display", "lifestyle", "other"]
+
+    with output_path.open("w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.DictWriter(
+            csvfile,
+            fieldnames=[
+                "image_path", "message_id", "channel_name",
+                "detected_class", "confidence_score", "image_category",
+            ],
+        )
+        writer.writeheader()
+        for idx, img_path in enumerate(image_paths):
+            message_id, channel_name = parse_image_metadata(img_path)
+            category = demo_categories[idx % len(demo_categories)]
+            writer.writerow({
+                "image_path": str(img_path).replace("\\", "/"),
+                "message_id": message_id if message_id is not None else "",
+                "channel_name": channel_name or "",
+                "detected_class": "demo",
+                "confidence_score": "0.7500",
+                "image_category": category,
+            })
+
+    logger.info("Demo YOLO CSV written: %d images → %s", len(image_paths), output_path)
+    return len(image_paths)
+
+
 def run_detection(
     image_dir: str,
     output_csv: str,
@@ -174,9 +212,17 @@ def main() -> None:
         default=os.getenv("YOLO_OUTPUT_CSV", "data/yolo_results.csv"),
     )
     parser.add_argument("--model", default="yolov8n.pt")
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Write heuristic categories without running YOLO (CI/offline fallback)",
+    )
     args = parser.parse_args()
 
-    run_detection(args.image_dir, args.output, args.model)
+    if args.demo:
+        run_demo_detection(args.image_dir, args.output)
+    else:
+        run_detection(args.image_dir, args.output, args.model)
 
 
 if __name__ == "__main__":
