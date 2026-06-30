@@ -304,7 +304,7 @@ def load_yolo_results(
     with engine.begin() as conn:
 
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS raw.yolo_detections (
+            CREATE TABLE IF NOT EXISTS raw.image_detections (
 
                 image_path TEXT,
 
@@ -314,7 +314,7 @@ def load_yolo_results(
 
                 detected_class TEXT,
 
-                confidence FLOAT,
+                confidence_score DOUBLE PRECISION,
 
                 image_category TEXT
 
@@ -322,7 +322,7 @@ def load_yolo_results(
         """))
 
         conn.execute(text("""
-            TRUNCATE TABLE raw.yolo_detections
+            TRUNCATE TABLE raw.image_detections
         """))
 
         with open(
@@ -336,64 +336,55 @@ def load_yolo_results(
 
             for row in reader:
 
+                message_id = row.get("message_id") or None
+
                 conn.execute(
 
                     text("""
-                        INSERT INTO raw.yolo_detections
+                        INSERT INTO raw.image_detections (
+                            image_path,
+                            message_id,
+                            channel_name,
+                            detected_class,
+                            confidence_score,
+                            image_category
+                        )
                         VALUES (
-
                             :image_path,
                             :message_id,
                             :channel_name,
                             :detected_class,
-                            :confidence,
+                            :confidence_score,
                             :image_category
-
                         )
                     """),
 
                     {
 
                         "image_path":
-                        row[
-                            "image_path"
-                        ],
+                        row.get("image_path"),
 
                         "message_id":
-                        int(
-                            row[
-                                "message_id"
-                            ]
-                        ),
+                        int(message_id) if message_id else None,
 
                         "channel_name":
-                        row[
-                            "channel_name"
-                        ],
+                        row.get("channel_name"),
 
                         "detected_class":
-                        row[
-                            "detected_class"
-                        ],
+                        row.get("detected_class"),
 
-                        "confidence":
-                        float(
-                            row[
-                                "confidence"
-                            ]
-                        ),
+                        "confidence_score":
+                        float(row.get("confidence_score") or 0),
 
                         "image_category":
-                        row[
-                            "image_category"
-                        ],
+                        row.get("image_category"),
 
                     }
 
                 )
 
     logger.info(
-        "YOLO results loaded"
+        "YOLO results loaded into raw.image_detections"
     )
 
 
