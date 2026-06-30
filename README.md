@@ -125,7 +125,7 @@ Collected fields:
 Load raw data:
 
 ```bash
-python src/load_raw.py
+python src/load_to_postgres.py --path data
 ```
 
 Initialize dbt:
@@ -137,21 +137,24 @@ dbt init medical_warehouse
 Run models:
 
 ```bash
-dbt run
+cd medical_warehouse
+dbt run --profiles-dir .
 ```
 
 Run tests:
 
 ```bash
-dbt test
+dbt test --profiles-dir .
 ```
 
 Generate documentation:
 
 ```bash
-dbt docs generate
-dbt docs serve
+dbt docs generate --profiles-dir .
+dbt docs serve --profiles-dir .
 ```
+
+See [docs/INTERIM_REPORT.md](docs/INTERIM_REPORT.md) for the interim submission write-up (Tasks 1 & 2).
 
 ---
 

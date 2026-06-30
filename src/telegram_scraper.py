@@ -299,6 +299,39 @@ CHANNEL_COLORS = {
     "TikvahPharma": (40,140,90),
 }
 
+SAMPLE_MESSAGES = {
+    "CheMed": {
+        "title": "CheMed — Medical Products",
+        "posts": [
+            ("Paracetamol 500mg — 120 ETB per strip. Fast delivery in Addis.", True),
+            ("Amoxicillin capsules available. Contact us for bulk pricing.", True),
+            ("Vitamin C supplements restocked. 350 ETB per bottle.", False),
+            ("Medical gloves and masks in stock. Wholesale prices available.", True),
+            ("Ibuprofen 400mg — effective pain relief. 95 ETB.", False),
+        ],
+    },
+    "LobeliaCosmetics": {
+        "title": "Lobelia Cosmetics",
+        "posts": [
+            ("Hydrating face cream with SPF — perfect for dry skin. 890 ETB.", True),
+            ("New serum collection launch! Limited stock.", True),
+            ("Sunscreen lotion SPF 50 — dermatologist recommended.", False),
+            ("Organic lip balm bundle — 3 for 450 ETB.", True),
+            ("Night repair cream restock this week.", False),
+        ],
+    },
+    "TikvahPharma": {
+        "title": "Tikvah Pharma",
+        "posts": [
+            ("Metformin 500mg tablets — diabetes management. 180 ETB.", True),
+            ("Omeprazole 20mg — acid reflux relief. Available now.", False),
+            ("Blood pressure monitors in stock. Home delivery.", True),
+            ("Paracetamol syrup for children — 220 ETB.", True),
+            ("Antibiotic ointment for minor wounds. Ask pharmacist.", False),
+        ],
+    },
+}
+
 
 def _create_placeholder_image(path: str, channel_name: str = "", msg_id: int = 0,
                               text_snippet: str = "") -> None:
