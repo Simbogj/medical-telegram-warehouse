@@ -1,81 +1,149 @@
+"""
+Task 5 — Dagster orchestration for the medical Telegram warehouse pipeline.
+
+Launch:
+    dagster dev -f pipeline.py
+    Open http://localhost:3000
+"""
+
+from __future__ import annotations
+
 import os
 import subprocess
+import sys
 from pathlib import Path
 
-from dagster import op, job, ScheduleDefinition, Definitions, get_dagster_logger
-
-# Helper to run a shell command and raise on failure
-def run_cmd(cmd: list[str], env: dict | None = None):
-    logger = get_dagster_logger()
-    logger.info(f"Running command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
-    logger.info(result.stdout)
-    if result.returncode != 0:
-        logger.error(result.stderr)
-        raise RuntimeError(f"Command failed: {' '.join(cmd)}")
-    return result.stdout
-
-# -------------------------------------------------------------------
-# Ops
-# -------------------------------------------------------------------
-@op(description="Scrape Telegram channels and store raw JSON/files in the data lake.")
-def scrape_telegram_data(context):
-    # Assume a script src/telegram_scraper.py exists with a main entrypoint
-    script_path = Path(__file__).parent / "src" / "telegram_scraper.py"
-    if not script_path.is_file():
-        raise FileNotFoundError(f"Telegram scraper script not found at {script_path}")
-    run_cmd(["python", str(script_path)])
-    context.log.info("Telegram scraping completed.")
-
-@op(description="Load the raw JSON files produced by the scraper into the PostgreSQL raw schema.")
-def load_raw_to_postgres(context):
-    script_path = Path(__file__).parent / "src" / "load_to_postgres.py"
-    if not script_path.is_file():
-        raise FileNotFoundError(f"Raw‑to‑Postgres loader not found at {script_path}")
-    run_cmd(["python", str(script_path)])
-    context.log.info("Raw data loaded into PostgreSQL.")
-
-@op(description="Execute dbt models to transform raw data into the star schema.")
-def run_dbt_transformations(context):
-    # dbt project lives in medical_warehouse/ – we run `dbt run`
-    cwd = Path(__file__).parent / "medical_warehouse"
-    run_cmd(["dbt", "run"], env=os.environ.copy())
-    context.log.info("dbt transformations executed.")
-
-@op(description="Run YOLO object detection on downloaded images and load results.")
-def run_yolo_enrichment(context):
-    # First run detection script
-    detect_script = Path(__file__).parent / "src" / "yolo_detect.py"
-    if not detect_script.is_file():
-        raise FileNotFoundError(f"YOLO detection script not found at {detect_script}")
-    run_cmd(["python", str(detect_script)])
-    # Then load CSV into PostgreSQL
-    load_script = Path(__file__).parent / "src" / "load_yolo_to_postgres.py"
-    if not load_script.is_file():
-        raise FileNotFoundError(f"YOLO loader script not found at {load_script}")
-    run_cmd(["python", str(load_script)])
-    context.log.info("YOLO enrichment completed and data loaded.")
-
-# -------------------------------------------------------------------
-# Job definition – defines execution order
-# -------------------------------------------------------------------
-@job(name="medical_warehouse_job")
-def medical_warehouse_job():
-    # Define dependencies
-    raw = scrape_telegram_data()
-    loaded = load_raw_to_postgres.after(raw)()
-    transformed = run_dbt_transformations.after(loaded)()
-    enriched = run_yolo_enrichment.after(transformed)()
-    return enriched
-
-# -------------------------------------------------------------------
-# Schedule – daily run at 02:00 UTC (adjustable)
-# -------------------------------------------------------------------
-daily_schedule = ScheduleDefinition(
-    job=medical_warehouse_job,
-    cron_schedule="0 2 * * *",  # 02:00 UTC each day
-    name="daily_medical_warehouse_schedule",
+from dagster import (
+    DagsterRunStatus,
+    Definitions,
+    Failure,
+    OpExecutionContext,
+    RunStatusSensorContext,
+    ScheduleDefinition,
+    job,
+    op,
+    run_status_sensor,
 )
 
-# Export definitions for Dagster UI
-Definitions(jobs=[medical_warehouse_job], schedules=[daily_schedule])
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def run_cmd(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    context: OpExecutionContext | None = None,
+) -> str:
+    log = context.log if context else None
+    display = " ".join(cmd)
+    if log:
+        log.info("Running: %s", display)
+
+    result = subprocess.run(
+        cmd,
+        cwd=str(cwd or PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+
+    if result.stdout and log:
+        log.info(result.stdout.strip())
+    if result.returncode != 0:
+        if log:
+            log.error(result.stderr.strip())
+        raise Failure(description=f"Command failed ({display}): {result.stderr.strip()}")
+
+    return result.stdout
+
+
+@op(description="Scrape Telegram channels into the raw data lake.")
+def scrape_telegram_data(context: OpExecutionContext) -> str:
+    script = PROJECT_ROOT / "src" / "telegram_scraper.py"
+    if not script.is_file():
+        raise Failure(description=f"Scraper not found: {script}")
+
+    demo = os.getenv("SCRAPER_DEMO", "true").lower() in {"1", "true", "yes"}
+    limit = os.getenv("SCRAPER_LIMIT", "100")
+    cmd = [sys.executable, str(script), "--path", "data", "--limit", limit]
+    if demo:
+        cmd.append("--demo")
+
+    run_cmd(cmd, context=context)
+    context.log.info("Telegram scrape finished (demo=%s)", demo)
+    return "scraped"
+
+
+@op(description="Load raw JSON and images metadata into PostgreSQL raw schema.")
+def load_raw_to_postgres(context: OpExecutionContext, _scrape: str) -> str:
+    script = PROJECT_ROOT / "src" / "load_to_postgres.py"
+    run_cmd(
+        [sys.executable, str(script), "--path", "data"],
+        context=context,
+    )
+    return "loaded"
+
+
+@op(description="Run dbt staging and mart models.")
+def run_dbt_transformations(context: OpExecutionContext, _loaded: str) -> str:
+    dbt_dir = PROJECT_ROOT / "medical_warehouse"
+    run_cmd(
+        ["dbt", "run", "--profiles-dir", "."],
+        cwd=dbt_dir,
+        context=context,
+    )
+    return "transformed"
+
+
+@op(description="Run YOLO detection, load results, and rebuild fct_image_detections.")
+def run_yolo_enrichment(context: OpExecutionContext, _transformed: str) -> str:
+    detect = PROJECT_ROOT / "src" / "yolo_detect.py"
+    loader = PROJECT_ROOT / "src" / "load_yolo_to_postgres.py"
+    dbt_dir = PROJECT_ROOT / "medical_warehouse"
+
+    run_cmd([sys.executable, str(detect)], context=context)
+    run_cmd([sys.executable, str(loader)], context=context)
+    run_cmd(
+        ["dbt", "run", "--select", "fct_image_detections", "--profiles-dir", "."],
+        cwd=dbt_dir,
+        context=context,
+    )
+    return "enriched"
+
+
+@job(name="medical_warehouse_job", description="End-to-end ELT pipeline for Telegram medical data.")
+def medical_warehouse_job():
+    scraped = scrape_telegram_data()
+    loaded = load_raw_to_postgres(scraped)
+    transformed = run_dbt_transformations(loaded)
+    run_yolo_enrichment(transformed)
+
+
+daily_schedule = ScheduleDefinition(
+    job=medical_warehouse_job,
+    cron_schedule="0 2 * * *",
+    name="daily_medical_warehouse_schedule",
+    description="Run the full pipeline daily at 02:00 UTC.",
+)
+
+
+@run_status_sensor(
+    run_status=DagsterRunStatus.FAILURE,
+    name="pipeline_failure_alert",
+    minimum_interval_seconds=60,
+)
+def pipeline_failure_alert(context: RunStatusSensorContext):
+    """Log alert on pipeline failure (extend with Slack/email in production)."""
+    run = context.dagster_run
+    context.log.error(
+        "ALERT: Pipeline run %s failed for job %s. Check Dagster UI logs.",
+        run.run_id,
+        run.job_name,
+    )
+
+
+defs = Definitions(
+    jobs=[medical_warehouse_job],
+    schedules=[daily_schedule],
+    sensors=[pipeline_failure_alert],
+)
